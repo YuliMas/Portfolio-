@@ -27,30 +27,24 @@ values ('2021-10-05', 1, 1, 'RUR', 2500),
 Код запроса и результат:
 ``` sql
 with table_1 as (select *, 
-                    sum(sum) over (partition by deal) as all_sum, -- Общая сумма долга на настоящий момент
-                    sum(sum) over (partition by deal order by date) as cum_sum -- Кумулятивный долг, накопившийся на момент текущей операции
+                    sum(sum) over (partition by deal) as all_sum, -- общая сумма долга на настоящий момент
+                    sum(sum) over (partition by deal order by date) as cum_sum -- кумулятивный долг, накопившийся на момент текущей операции
                 from PDCL),
 table_2 as (select *,
-                case when cum_sum = 0 then 0 else 1 end as flag -- Этот столбец задает значения 0 и 1 в зависимости от того, какая сумма долга накопилась 
-                                                                -- на счету:
-            from table_1),                                      -- если 0 - то 0, если больше 0 - то 1
+                case when cum_sum = 0 then 0 else 1 end as flag -- 0 или 1 в зависимости от того, чему равна cum_sum на счете
+            from table_1),                                      
 table_3 as (select *,
-                row_number() over (partition by deal, flag order by date) as range_number -- Отранжируем наши записи (операции) внутри группы "номер кредита 
-                                                                                          -- + значение flag": таким образом, каждая новая запись с 
-            from table_2),                                                                -- обнулением счета по данному кредиту (т.е. закрытием просрочки) 
-table_4 as (select *,                                                                     -- будет получать ранг 1. Такой же ранг получит самая первая запись 
-	                                                                                      -- с появлением положительного числа на счете.
-                max(date) over (partition by deal, range_number) as date_of_start, -- Выберем наибольшее значение даты в окне "номер кредита + ранг". 
-                                                                                   -- Это позволит получить самую позднюю дату для всех записей с рангом 1.
-                lead(date) over (partition by deal order by date) as next_date     -- Подтянем к каждой из имеющихся в таблице дат дату следующей операции.
+                row_number() over (partition by deal, flag order by date) as range_number  -- ранг операции внутри окна deal + flag                      
+            from table_2),                                                               
+table_4 as (select *,                                                                                                                                        
+                max(date) over (partition by deal, range_number) as date_of_start, -- наибольшее значение даты в окне "номер кредита + ранг" 
+                lead(date) over (partition by deal order by date) as next_date     -- дата следующей операции для каждой даты
             from table_3)                                                       
 select deal,
         all_sum,
-        max(case when flag = 0 then next_date else date_of_start end) as start_of_delay,             -- Зададим условие: в случае если значение колонки flag 
-                                                                                                     -- равно 0 (т.е. просрочка закончилась), выведем значение
-        current_date - max(case when flag = 0 then next_date else date_of_start end) as cnt_delay_days --следующей за ней даты; если значение равно 1 (т.е. 
-                                                                                                       -- сумма просрочки) положительная и не обнулялась,
-from table_4                                                                                           -- тогда берем дату, лежащую в столбце date_of_start
+        max(case when flag = 0 then next_date else date_of_start end) as start_of_delay, -- дата начала текущей просрочки 
+        current_date - max(case when flag = 0 then next_date else date_of_start end) as cnt_delay_days -- количество дней текущей просрочки
+from table_4                                                                                           
 where all_sum > 0 and range_number = 1
 group by 1, 2
 
